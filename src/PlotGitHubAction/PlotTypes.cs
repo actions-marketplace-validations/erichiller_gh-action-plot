@@ -1,15 +1,21 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
 
 using ScottPlot;
 
 namespace PlotGitHubAction;
 
 public interface IXYData {
-    public string     Title { get; }
-    public double[]   GetChartXData( );
-    public double[]   GetChartYData( );
-    public LineStyle? LineStyle { get; }
+    public string       Title { get; }
+    public double[]     GetChartXData( );
+    public double[]     GetChartYData( );
+    public LinePattern? LinePattern { get; }
+    public Color?       LineColor   { get; }
+    public float?       LineWidth   { get; }
+    public MarkerShape? MarkerShape { get; }
+    public float?       MarkerSize  { get; }
 }
 
 public interface IXYPlotConfig {
@@ -80,6 +86,23 @@ public record XYData<TXData>(
                                             _                       => throw new System.Exception( "Invalid type" )
                                         };
 
-    public double[]   GetChartYData( ) => Y;
-    public LineStyle? LineStyle        { get; init; }
+    public double[]     GetChartYData( ) => Y;
+    public LinePattern? LinePattern      { get; init; } = null;
+    public Color?       LineColor        { get; init; } = null;
+    public float?       LineWidth        { get; init; } = null;
+    public MarkerShape? MarkerShape      { get; init; } = null;
+    public float?       MarkerSize       { get; init; } = null;
+}
+
+
+
+
+public class ScottPlotColorConverter : System.Text.Json.Serialization.JsonConverter<ScottPlot.Color> {
+    public override ScottPlot.Color Read( ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options ) {
+        return ScottPlot.Color.FromHex( reader.GetString() ?? throw new JsonException() );
+    }
+
+    public override void Write( Utf8JsonWriter writer, ScottPlot.Color value, JsonSerializerOptions options ) {
+        ( writer ?? throw new ArgumentNullException( nameof(writer) ) ).WriteStringValue( value.ToStringRGBA() );
+    }
 }

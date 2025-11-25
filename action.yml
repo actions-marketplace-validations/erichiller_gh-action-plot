@@ -20,7 +20,33 @@ inputs:
   output_dir:
     description: 'Directory to place generated content.'
     required: true
-  
+  build_log_file_pattern:
+    description: 'File pattern for build log.'
+    required: true
+    default: '*-build.log'
+  debug:
+    description: 'Enable debug logging for the action'
+    required: false
+    default: 'false'
+  log_level:
+    description: 'Log Level: (verbose|debug|notice|warn|error|none)'
+    required: false
+    default: 'notice'
+
+# https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions#outputs-for-docker-container-and-javascript-actions
+outputs:
+  test_result:
+    description: '{ "success": (true|false) }'
+  test_summary:
+    description: 'Markdown summary of tests success/skip/fail'
+#  tests_success_count:
+#    description: 'The number of tests that were successful'
+#  tests_failed_count:
+#    description: 'The number of tests that failed'
+#  tests_skipped_count:
+#    description: 'The number of tests that were skipped'
+    
+
 #outputs:
 #  random-number:
 #    description: "Random number"

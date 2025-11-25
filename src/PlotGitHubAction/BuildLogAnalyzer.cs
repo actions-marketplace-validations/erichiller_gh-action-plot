@@ -1,9 +1,9 @@
 ﻿using System;
-using System.Linq;
 using System.Collections.Generic;
-using System.Text.RegularExpressions;
 using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace PlotGitHubAction;
 
@@ -22,6 +22,12 @@ record WarnLogEntry(
         get => _idMarkdown ?? Id;
         init => _idMarkdown = value;
     }
+
+    public string SortableLocationString =>
+        System.IO.Path.GetFileName( File )
+        + "_" + ( Position?.Line.ToString()   ?? String.Empty ).PadLeft( 6, '0' )
+        + ":" + ( Position?.Column.ToString() ?? String.Empty ).PadLeft( 6, '0' )
+        + "-" + ( Id ?? String.Empty );
 }
 
 public class BuildLogAnalyzer {
@@ -31,9 +37,9 @@ public class BuildLogAnalyzer {
     public readonly  string             MarkdownPath;
     private const    string             _build_warnings_per_project_chart_file_name = "build_warnings";
     public const     string             BUILD_WARNINGS_TOTAL_CHART_FILE_NAME        = "build_warnings_total";
+    public const     string             BUILD_WARNINGS_TOTAL_RECENT_CHART_FILE_NAME = "build_warnings_total_recent";
     private          string             _filePattern => _config.BuildLogFilePattern;
 
-    // private readonly Dictionary<CsProjInfo, List<BuildLogWarning>> _projWarnings   = new ();
     private readonly Dictionary<CsProjInfo, HashSet<WarnLogEntry>> _projWarningsHs = new ();
 
     public BuildLogAnalyzer( ActionConfig config ) {
@@ -61,6 +67,8 @@ public class BuildLogAnalyzer {
         // Charts
         summary.AppendLine();
         summary.AppendLine();
+        summary.AppendLine( _config.GetMarkdownChartLink( BUILD_WARNINGS_TOTAL_RECENT_CHART_FILE_NAME ) );
+        summary.AppendLine();
         summary.AppendLine( _config.GetMarkdownChartLink( BUILD_WARNINGS_TOTAL_CHART_FILE_NAME ) );
         summary.AppendLine();
         summary.AppendLine( _config.GetMarkdownChartLink( _build_warnings_per_project_chart_file_name ) );
@@ -84,6 +92,7 @@ public class BuildLogAnalyzer {
             + String.Empty.PadRight( 40, '-' ) );
 
         // filePath has the FullName (fully rooted/resolved path)
+        Log.Info( $"Searching '{_directoryRoot}' for build log files matching pattern '{_filePattern}'" );
         foreach ( string filePath in System.IO.Directory.EnumerateFiles( _directoryRoot, _filePattern, System.IO.SearchOption.AllDirectories ).Order() ) {
             Log.Info( $"build log: {filePath}" );
             string logString = System.IO.File.ReadAllText( filePath );
@@ -113,7 +122,13 @@ public class BuildLogAnalyzer {
                 message = Regex.Replace( message, @"( |^)['""]", " `" );
                 message = Regex.Replace( message, @"['""]( |$)", "` " );
 
-                CsProjInfo proj = _config.GetProject( projPath );
+                CsProjInfo proj;
+                try {
+                    proj = _config.GetProject( projPath );
+                } catch ( Exception ) {
+                    Log.Error( $"Failed to find project for project path '{projPath}' in [{String.Join( ", ", _config.GetCsProjectsCopy().Select( x => $"{x.ProjectName} = {x.FilePath}" ) )}" );
+                    throw;
+                }
                 lastCsProj ??= proj;
 
                 if ( ( helpId?.Equals( id, System.StringComparison.OrdinalIgnoreCase ) ?? false ) && helpUrl is { } ) {
@@ -142,30 +157,32 @@ public class BuildLogAnalyzer {
             }
         }
 
-        foreach ( var (proj, warnLogEntries) in _projWarningsHs ) {
-            warnings.AppendLine( $"**{proj.ProjectName}**".PadRight( 50 ) + " |||" );
-            foreach ( var entry in warnLogEntries.OrderBy( t => Path.GetFileName( Path.GetFileName( t.File ) ) ) ) {
+        foreach ( var (proj, warnLogEntries) in _projWarningsHs.OrderBy( kv => kv.Key.ProjectName ) ) {
+            warnings.AppendLine( $"""
+                                  **{proj.ProjectName}** <a id="{proj.MarkdownId}"></a>
+                                  """.PadRight( 50 ) + " |||" );
+            foreach ( var entry in warnLogEntries.OrderBy( t => t.SortableLocationString ) ) {
                 warnings.AppendLine(
                     sourceUrls.AddSourceLink(
                         filePath: entry.File,
-                        start: entry.Position ).PadRight( 50 )
+                        start: entry.Position,
+                        linkToBranch: true ).PadRight( 50 )
                     + $" | {entry.IdMarkdown,-9} | {entry.Level,-10} | {entry.Message}" );
             }
         }
         // per-project table
-        Dictionary<string, int> buildLogStats = _projWarningsHs.ToDictionary( p => p.Key.ProjectName, p => p.Value.Count );
+        Dictionary<string, (string projectId, int warningCount)> buildLogStats = _projWarningsHs.ToDictionary( p => p.Key.ProjectName, p => ( projectId: p.Key.MarkdownId, warningCount: p.Value.Count ) );
         summary.AppendLine();
-        summary.AppendLine( "Project".PadRight( 25 )         + colDiv + "Warnings" );
-        summary.AppendLine( String.Empty.PadRight( 25, '-' ) + colDiv + String.Empty.PadRight( 20, '-' ) );
-        foreach ( var (projectName, warningCount) in buildLogStats.OrderByDescending( kv => kv.Key ) ) {
-            summary.AppendLine( projectName.PadRight( 25 ) + colDiv + warningCount );
+        summary.AppendLine( "Project".PadRight( 50 )         + colDiv + "Warnings" );
+        summary.AppendLine( String.Empty.PadRight( 50, '-' ) + colDiv + String.Empty.PadRight( 20, '-' ) );
+        foreach ( var (projectName, (projectId, warningCount)) in buildLogStats.OrderBy( kv => kv.Key ) ) {
+            summary.AppendLine( $"[{projectName}](#{projectId})".PadRight( 50 ) + colDiv + warningCount );
         }
-        summary.AppendLine( "**TOTAL**".PadRight( 25 ) + colDiv + $"**{_projWarningsHs.SelectMany( p => p.Value ).Count()}**" );
+        summary.AppendLine( "**TOTAL**".PadRight( 50 ) + colDiv + $"**{_projWarningsHs.SelectMany( p => p.Value ).Count()}**" );
         summary.AppendLine();
 
         // per Analyzer ID table
         Dictionary<string, int> analyzerIdStats = _projWarningsHs
-                                                  //
                                                   .SelectMany( kv => kv.Value )
                                                   .Where( v => v.Id is { } )
                                                   .GroupBy( t => t.Id! )
@@ -190,7 +207,7 @@ public class BuildLogAnalyzer {
         warnings.AppendLine();
         helpUrls.AddReferencedUrls( warnings );
 
-        _historyPlotter.AddToHistory( buildLogStats );
+        _historyPlotter.AddToHistory( buildLogStats.ToDictionary( kv => kv.Key, kv => kv.Value.warningCount ) );
 
         System.IO.File.WriteAllText( MarkdownPath, $"{summary}\n{warnings}" );
     }
@@ -217,6 +234,17 @@ public class BuildLogAnalyzer {
                 XAxisType: AxisType.DateTime,
                 YAxisType: AxisType.Numeric,
                 Data: Array.Empty<XYData<DateTime>>()
-            ), PlotDataSelection.Total )
+            ), PlotDataSelection.Total ),
+        _historyPlotter.AddDataToPlottable(
+            new XYPlotConfig<DateTime>(
+                Title: "Build Warnings Total - Recent",
+                OutputFileName: BUILD_WARNINGS_TOTAL_RECENT_CHART_FILE_NAME,
+                PlotType: PlotType.Scatter,
+                Width: 1024,
+                Height: 800,
+                XAxisType: AxisType.DateTime,
+                YAxisType: AxisType.Numeric,
+                Data: Array.Empty<XYData<DateTime>>()
+            ), PlotDataSelection.Total | PlotDataSelection.Recent )
     };
 }
